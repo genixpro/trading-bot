@@ -1,6 +1,6 @@
 import torch
 from torch import nn
-from constants import relative_price_buckets, getPriceBucket, volume_buckets, getVolumeBucket, prediction_intervals, order_book_price_buckets
+from constants import match_price_buckets, getMatchPriceBucket, volume_buckets, getVolumeBucket, prediction_intervals, order_book_price_buckets
 
 
 
@@ -9,8 +9,8 @@ class PredictionNetwork(nn.Module):
     def __init__(self):
         super(PredictionNetwork, self).__init__()
 
-        self.inputSize = 1 + len(relative_price_buckets) + len(order_book_price_buckets) - 2
-        self.outputSize = len(relative_price_buckets) * len(volume_buckets) * len(prediction_intervals)
+        self.inputSize = 1 + len(match_price_buckets) + len(order_book_price_buckets) - 2
+        self.outputSize = len(match_price_buckets) * len(volume_buckets) * len(prediction_intervals)
         self.lstmHiddenSize = 128
         self.denseHiddenSize = 128
 
@@ -38,7 +38,7 @@ class PredictionNetwork(nn.Module):
 
         dense_output = self.dense(sequence_reshaped)
 
-        dense_output_reshaped = torch.reshape(dense_output, [batchSize, sequenceLength, len(prediction_intervals), len(relative_price_buckets), len(volume_buckets)])
+        dense_output_reshaped = torch.reshape(dense_output, [batchSize, sequenceLength, len(prediction_intervals), len(match_price_buckets), len(volume_buckets)])
 
         output_softmax = self.softmax(dense_output_reshaped)
 

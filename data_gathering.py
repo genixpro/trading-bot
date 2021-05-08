@@ -7,6 +7,11 @@ from datetime import datetime, timedelta
 mongo_client = MongoClient('mongodb://localhost:27017/')
 
 class TraderDataGatherer(cbpro.WebsocketClient):
+    def __init__(self, saveToDisc=True):
+        super(TraderDataGatherer, self).__init__()
+
+        self.saveToDisc = saveToDisc
+
     def on_open(self):
         self.url = "wss://ws-feed.pro.coinbase.com/"
         self.products = ["ETH-USD"]
@@ -18,9 +23,20 @@ class TraderDataGatherer(cbpro.WebsocketClient):
 
         self.matches_collection.create_index("time")
 
+        self.match_hooks = []
+
+        self.order_book_hooks = []
+
     def on_message(self, msg):
         if msg['type'] == 'match':
-            self.matches_collection.insert_one(msg)
+            time = datetime.fromisoformat(msg['time'][:msg['time'].find('.')])
+            msg['time'] = time
+            if self.saveToDisc:
+                self.matches_collection.insert_one(msg)
+
+            for hook in self.match_hooks:
+                hook(msg)
+
         if msg['type'] == 'snapshot':
             self.snapshotToSave = msg
         if msg['type'] == 'l2update':
@@ -29,18 +45,33 @@ class TraderDataGatherer(cbpro.WebsocketClient):
 
             if self.snapshotToSave is not None:
                 self.snapshotToSave['time'] = (time - timedelta(milliseconds=50))
-                self.order_book_collection.insert_one(self.snapshotToSave)
+                if self.saveToDisc:
+                    self.order_book_collection.insert_one(self.snapshotToSave)
+                for hook in self.order_book_hooks:
+                    hook(msg)
                 self.snapshotToSave = None
 
-            self.order_book_collection.insert_one(msg)
+            if self.saveToDisc:
+                self.order_book_collection.insert_one(msg)
+                for hook in self.order_book_hooks:
+                    hook(msg)
+
+    def add_match_hook(self, func):
+        self.match_hooks.append(func)
+
+    def add_order_book_hook(self, func):
+        self.order_book_hooks.append(func)
+
     def on_close(self):
         pass
 
 
-wsClient = TraderDataGatherer()
-wsClient.start()
-# time.sleep(60)
-# wsClient.close()
+if __name__ == "__main__":
+    wsClient = TraderDataGatherer(saveToDisc=True)
+    wsClient.start()
+
+    # time.sleep(60)
+    # wsClient.close()
 
 
 

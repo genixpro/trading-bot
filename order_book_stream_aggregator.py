@@ -1,12 +1,12 @@
 from datetime import datetime
 from pprint import pprint
-from constants import relative_price_buckets, getPriceBucket, order_book_price_buckets, getOrderBookPriceBucket
+from constants import match_price_buckets, getMatchPriceBucket, order_book_price_buckets, getOrderBookPriceBucket
 import numpy
 
 class OrderBookStreamAggregator:
     aggregation_keep_in_memory_seconds = 180
 
-    def __init__(self, mongo_client):
+    def __init__(self, mongo_client, saveToDisc=True):
         self.aggregations = {}
 
         self.mongo_client = mongo_client
@@ -18,6 +18,10 @@ class OrderBookStreamAggregator:
         
         self.current_bids = {}
         self.current_asks = {}
+
+        self.saveToDisc = saveToDisc
+
+        self.hooks = []
 
     def processOrderBookMessage(self, message):
         if message['type'] == 'snapshot':
@@ -33,7 +37,10 @@ class OrderBookStreamAggregator:
             if self.most_recent_message_time_processed is not None:
                 if time > self.most_recent_message_time_processed:
                     aggregation = self.createAggregationFromCurrentOrderBook()
-                    self.aggregated_order_book_collection.replace_one({"_id": aggregation['_id']}, aggregation, upsert=True)
+                    if self.saveToDisc:
+                        self.aggregated_order_book_collection.replace_one({"_id": aggregation['_id']}, aggregation, upsert=True)
+                    for hook in self.hooks:
+                        hook(aggregation)
 
             for change in message['changes']:
                 if change[0] == 'buy':
@@ -85,3 +92,7 @@ class OrderBookStreamAggregator:
                 str(bucket): volume for bucket, volume in histogram.items()
             }
         }
+
+    def addAggregationHook(self, func):
+        self.hooks.append(func)
+

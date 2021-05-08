@@ -1,7 +1,7 @@
 import numpy
 from pprint import pprint
 
-relative_price_buckets = [
+match_price_buckets = [
     (0.0000, 0.9950),
     (0.9950, 0.9960),
     (0.9960, 0.9970),
@@ -20,8 +20,8 @@ relative_price_buckets = [
     (1.0050, 100000),
 ]
 
-def getPriceBucket(relativePrice):
-    for bucket in relative_price_buckets:
+def getMatchPriceBucket(relativePrice):
+    for bucket in match_price_buckets:
         if relativePrice >= bucket[0] and relativePrice < bucket[1]:
             return bucket
     raise ValueError(f"Unable to find a match price bucket for relative price {relativePrice}")
@@ -79,9 +79,6 @@ def getOrderBookPriceBucket(relativePrice):
 
 
 prediction_intervals = [
-    1,
-    2,
-    3,
-    4,
-    5
+    (1, 5),
+    (5, 15)
 ]

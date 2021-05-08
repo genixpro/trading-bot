@@ -1,11 +1,12 @@
 import torch
 from datetime import timedelta, datetime
-from constants import relative_price_buckets, getPriceBucket, volume_buckets, getVolumeBucket, prediction_intervals, order_book_price_buckets
+from constants import match_price_buckets, getMatchPriceBucket, volume_buckets, getVolumeBucket, prediction_intervals, order_book_price_buckets
 import math
 from prediction_network import PredictionNetwork
 import pymongo
 import random
 import numpy
+from pprint import pprint
 
 
 class NoFutureForAggregationFoundError(ValueError):
@@ -27,61 +28,82 @@ class Predictor:
             lr=0.0001
         )
 
-        self.maxIterations = 50000
+        self.maxIterations = 5000
         self.sequenceLength = 15
         self.batchSize = 16
 
         self.inputs = []
         self.outputs = []
 
+    def saveModel(self, fileName="model.bin"):
+        f = open(fileName, 'wb')
+        torch.save(self.model.state_dict(), f)
+        f.close()
 
-    def prepareMatchAggregation(self, aggregation):
-        time = aggregation["time"]
 
+    def loadModel(self, fileName="model.bin"):
+        f = open(fileName, 'rb')
+
+        stateDict = torch.load(f, map_location=self.device)
+
+        f.close()
+
+        # Load the state dictionary into the model itself.
+        self.model.load_state_dict(stateDict)
+
+    def computeRelativeHistogram(self, aggregation, basePrice):
+        histogram = {
+            priceBucket: 0 for priceBucket in match_price_buckets
+        }
+        for price, volume in aggregation['matches']:
+            relativePrice = price / basePrice
+
+            priceBucket = getMatchPriceBucket(relativePrice)
+
+            histogram[priceBucket] += volume
+
+        return histogram
+
+    def prepareMatchAggregationInput(self, aggregation):
         inputVector = [
-            math.log(aggregation['basePrice'])
+            math.log(aggregation['averagePrice'])
         ]
 
-        for priceBucket in relative_price_buckets:
-            volume = aggregation['volumes'][str(priceBucket)]
+        histogram = self.computeRelativeHistogram(aggregation, aggregation['averagePrice'])
+
+        for priceBucket in match_price_buckets:
+            volume = histogram[priceBucket]
             if volume == 0:
                 inputVector.append(-1)
             else:
                 inputVector.append(math.log(volume)*0.1)
 
+        return inputVector
+
+    def prepareMatchAggregationExpectedOutput(self, aggregation):
+        time = aggregation["time"]
+
         outputVector = []
 
-        for interval in prediction_intervals:
-            nextAggregationTime = time + timedelta(minutes=interval)
-            nextAggregation = self.aggregated_matches_collection.find_one({"_id": nextAggregationTime})
-
-            if nextAggregation is None:
-                raise NoFutureForAggregationFoundError(f"There is no data {interval} minutes in the future for aggregation {aggregation['time']} in order to prepare a prediction")
-
-            volumesRelativeToOriginalAggregation = {
-                priceRange: 0 for priceRange in relative_price_buckets
+        for intervalStart, intervalEnd in prediction_intervals:
+            histogram = {
+                priceBucket: 0 for priceBucket in match_price_buckets
             }
+            for relativeMinute in range(intervalStart, intervalEnd + 1):
+                nextAggregationTime = time + timedelta(minutes=relativeMinute)
+                nextAggregation = self.aggregated_matches_collection.find_one({"_id": nextAggregationTime})
 
-            for priceBucket in relative_price_buckets:
-                # TODO: Improve how this is done so that we don't lose fidelity as a result of this bucketing we are doing
-                nextPriceMidpoint = nextAggregation['basePrice'] * (priceBucket[1] + priceBucket[0]) / 2.0
+                if nextAggregation is None:
+                    raise NoFutureForAggregationFoundError(f"There is no data {relativeMinute} minutes in the future for aggregation {aggregation['time']} in order to prepare a prediction")
 
-                nextPriceRelative = nextPriceMidpoint / aggregation['basePrice']
-
-                nextPriceBucketRelativeToOriginal = getPriceBucket(nextPriceRelative)
-
-                volume = nextAggregation['volumes'][str(priceBucket)]
-
-                # if volume > 0:
-                #     print(nextPriceBucketRelativeToOriginal)
-
-                volumesRelativeToOriginalAggregation[nextPriceBucketRelativeToOriginal] += volume
-
+                minuteHistogram = self.computeRelativeHistogram(nextAggregation, aggregation['averagePrice'])
+                for priceBucket, volume in minuteHistogram.items():
+                    histogram[priceBucket] += volume
 
             intervalOutputVector = []
 
-            for priceRange in relative_price_buckets:
-                volume = volumesRelativeToOriginalAggregation[priceRange]
+            for priceRange in match_price_buckets:
+                volume = histogram[priceRange]
                 volumeBucket = getVolumeBucket(volume)
 
                 volumeOutputVector = [0] * len(volume_buckets)
@@ -92,13 +114,18 @@ class Predictor:
 
             outputVector.append(intervalOutputVector)
 
-        return inputVector, outputVector
+        return outputVector
 
     def prepareOrderBookAggregation(self, aggregation):
         vector = []
 
         for priceBucket in order_book_price_buckets[1:-1]:
-            vector.append(math.log(aggregation['histogram'][str(priceBucket)]) * 0.1)
+            value = aggregation['histogram'][str(priceBucket)]
+
+            if value == 0:
+                vector.append(-1)
+            else:
+                vector.append(math.log(value) * 0.1)
 
         return vector
 
@@ -112,7 +139,8 @@ class Predictor:
                 orderBookAggregation = self.aggregated_order_book_collection.find_one({"_id": aggregation['_id']})
 
                 if orderBookAggregation is not None:
-                    inputVector, outputVectors = self.prepareMatchAggregation(aggregation)
+                    inputVector = self.prepareMatchAggregationInput(aggregation)
+                    outputVectors = self.prepareMatchAggregationExpectedOutput(aggregation)
 
                     inputVector.extend(self.prepareOrderBookAggregation(orderBookAggregation))
 
@@ -166,3 +194,56 @@ class Predictor:
 
         for iteration in range(self.maxIterations):
             self.runSingleTrainingIterations(iteration)
+
+
+    def predict(self, recentMatchAggregations, recentOrderBookAggregations):
+        if len(recentMatchAggregations) != len(recentOrderBookAggregations):
+            raise ValueError(f"The length of the recent match aggregations does not match the length of the recent order book aggregations")
+
+        recentMatchAggregations = sorted(recentMatchAggregations, key=lambda match: match['_id'])
+        recentOrderBookAggregations = sorted(recentOrderBookAggregations, key=lambda orderBookAgg: orderBookAgg['_id'])
+
+        # print([match['time'] for match in recentMatchAggregations])
+        # print(recentOrderBookAggregations)
+
+        input = []
+        for matchAggregation, orderBookAggregation in zip(recentMatchAggregations, recentOrderBookAggregations):
+            inputVector = self.prepareMatchAggregationInput(matchAggregation)
+            inputVector.extend(self.prepareOrderBookAggregation(orderBookAggregation))
+
+            input.append(inputVector)
+
+        inputTensor = torch.tensor(numpy.array([input]), device=self.device, dtype=torch.float32)
+
+        predictions = self.model(inputTensor).cpu()
+
+        predictionObjects = []
+
+        for intervalIndex, (intervalStart, intervalEnd) in enumerate(prediction_intervals):
+            predictionData = {
+                "intervalStart": intervalStart,
+                "intervalEnd": intervalEnd,
+                "start": recentMatchAggregations[-1]['time'] + timedelta(minutes=intervalStart),
+                "end": recentMatchAggregations[-1]['time'] + timedelta(minutes=intervalEnd),
+                "prices": []
+            }
+
+            for priceRangeIndex, priceBucket in enumerate(match_price_buckets):
+                priceData = {
+                    "relativePriceStart": priceBucket[0],
+                    "relativePriceEnd": priceBucket[1],
+                    "volumes": []
+                }
+                for volumeIndex, volumeBucket in enumerate(volume_buckets):
+                    priceData["volumes"].append({
+                        "volumeStart": volumeBucket[0],
+                        "volumeEnd": volumeBucket[1],
+                        "probability": predictions[0][-1][intervalIndex][priceRangeIndex][volumeIndex].item()
+                    })
+
+                predictionData["prices"].append(priceData)
+
+            predictionObjects.append(predictionData)
+
+        return predictionObjects
+
