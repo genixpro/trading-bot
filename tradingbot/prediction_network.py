@@ -1,6 +1,6 @@
 import torch
 from torch import nn
-from constants import match_price_buckets, getMatchPriceBucket, volume_buckets, getVolumeBucket, prediction_intervals, order_book_price_buckets
+from tradingbot.constants import match_price_buckets, getMatchPriceBucket, volume_buckets, getVolumeBucket, prediction_intervals, order_book_price_buckets
 
 
 

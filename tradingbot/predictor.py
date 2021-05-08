@@ -1,11 +1,12 @@
 import torch
 from datetime import timedelta, datetime
-from constants import match_price_buckets, getMatchPriceBucket, volume_buckets, getVolumeBucket, prediction_intervals, order_book_price_buckets
+from tradingbot.constants import match_price_buckets, getMatchPriceBucket, volume_buckets, getVolumeBucket, prediction_intervals, order_book_price_buckets
 import math
-from prediction_network import PredictionNetwork
+from tradingbot.prediction_network import PredictionNetwork
 import pymongo
 import random
 import numpy
+from concurrent.futures import ProcessPoolExecutor
 from pprint import pprint
 
 
@@ -28,12 +29,12 @@ class Predictor:
             lr=0.0001
         )
 
-        self.maxIterations = 5000
+        self.maxIterations = 25000
         self.sequenceLength = 15
         self.batchSize = 16
 
-        self.inputs = []
-        self.outputs = []
+        self.inputs = torch.tensor([])
+        self.outputs = torch.tensor([])
 
     def saveModel(self, fileName="model.bin"):
         f = open(fileName, 'wb')
@@ -151,8 +152,8 @@ class Predictor:
                 pass
 
         print(f"Finished preparing {len(inputs)} samples.")
-        self.inputs = inputs
-        self.outputs = outputs
+        self.inputs = torch.tensor(numpy.array([inputs]), device=self.device, dtype=torch.float32)
+        self.outputs = torch.tensor(numpy.array([outputs]), device=self.device, dtype=torch.float32)
 
 
     def prepareBatch(self):
@@ -160,13 +161,12 @@ class Predictor:
         output = []
 
         for n in range(self.batchSize):
-            start = random.randint(0, len(self.inputs) - self.sequenceLength - 1)
+            start = random.randint(0, self.inputs.shape[1] - self.sequenceLength - 1)
 
-            input.append(self.inputs[start:start + self.sequenceLength])
-            output.append(self.outputs[start:start + self.sequenceLength])
+            input.append(self.inputs[:, start:start + self.sequenceLength])
+            output.append(self.outputs[:, start:start + self.sequenceLength])
 
-        return torch.tensor(numpy.array(input), device=self.device, dtype=torch.float32), \
-               torch.tensor(numpy.array(output), device=self.device, dtype=torch.float32)
+        return torch.cat(input, dim=0), torch.cat(output, dim=0)
 
 
     def runSingleTrainingIterations(self, iteration):
@@ -186,8 +186,8 @@ class Predictor:
 
         end = datetime.now()
 
-        if iteration % 100 == 0:
-            print(f"Iteration {iteration}. Loss {loss.cpu().item():.4f} Time {(end - start).total_seconds():.3f}")
+        if iteration % 1000 == 0:
+            print(f"Iteration {iteration}. Loss {loss.cpu().item():.4f} Time per batch {(end - start).total_seconds():.3f}")
 
     def train(self):
         self.prepareAllAggregations()
@@ -232,6 +232,8 @@ class Predictor:
                 priceData = {
                     "relativePriceStart": priceBucket[0],
                     "relativePriceEnd": priceBucket[1],
+                    "priceStart": priceBucket[0] * recentMatchAggregations[-1]['averagePrice'],
+                    "priceEnd": priceBucket[1] * recentMatchAggregations[-1]['averagePrice'],
                     "volumes": []
                 }
                 for volumeIndex, volumeBucket in enumerate(volume_buckets):

@@ -1,6 +1,6 @@
 from datetime import datetime
 from pprint import pprint
-from constants import match_price_buckets, getMatchPriceBucket, order_book_price_buckets, getOrderBookPriceBucket
+from tradingbot.constants import match_price_buckets, getMatchPriceBucket, order_book_price_buckets, getOrderBookPriceBucket
 import numpy
 
 class OrderBookStreamAggregator:
