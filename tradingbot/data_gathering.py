@@ -3,6 +3,7 @@ from pprint import pprint
 import time
 from pymongo import MongoClient
 from datetime import datetime, timedelta
+import tradingbot.constants
 
 mongo_client = MongoClient('mongodb://localhost:27017/')
 
@@ -12,20 +13,19 @@ class TraderDataGatherer(cbpro.WebsocketClient):
 
         self.saveToDisc = saveToDisc
 
+        self.match_hooks = []
+        self.order_book_hooks = []
+
     def on_open(self):
         self.url = "wss://ws-feed.pro.coinbase.com/"
         self.products = ["ETH-USD"]
         self.channels = ["matches", "level2"]
-        self.matches_collection = mongo_client.trader.matches
-        self.order_book_collection = mongo_client.trader.order_book
+        self.matches_collection = mongo_client[tradingbot.constants.raw_data_database_name].matches
+        self.order_book_collection = mongo_client[tradingbot.constants.raw_data_database_name].order_book
 
         self.snapshotToSave = None
 
         self.matches_collection.create_index("time")
-
-        self.match_hooks = []
-
-        self.order_book_hooks = []
 
     def on_message(self, msg):
         if msg['type'] == 'match':
@@ -44,11 +44,11 @@ class TraderDataGatherer(cbpro.WebsocketClient):
             msg['time'] = time
 
             if self.snapshotToSave is not None:
-                self.snapshotToSave['time'] = (time - timedelta(milliseconds=50))
+                self.snapshotToSave['time'] = (time - timedelta(milliseconds=5))
                 if self.saveToDisc:
                     self.order_book_collection.insert_one(self.snapshotToSave)
                 for hook in self.order_book_hooks:
-                    hook(msg)
+                    hook(self.snapshotToSave)
                 self.snapshotToSave = None
 
             if self.saveToDisc:
@@ -64,16 +64,6 @@ class TraderDataGatherer(cbpro.WebsocketClient):
 
     def on_close(self):
         pass
-
-
-if __name__ == "__main__":
-    wsClient = TraderDataGatherer(saveToDisc=True)
-    wsClient.start()
-
-    # time.sleep(60)
-    # wsClient.close()
-
-
 
 
 # wsClient = cbpro.WebsocketClient(
