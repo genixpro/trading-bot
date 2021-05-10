@@ -1,0 +1,111 @@
+import cbpro
+from pprint import pprint
+import time
+from pymongo import MongoClient
+from datetime import datetime, timedelta
+import tradingbot.constants
+
+import asyncio
+from binance import AsyncClient, BinanceSocketManager
+
+
+mongo_client = MongoClient('mongodb://localhost:27017/')
+
+class Arbitrager(cbpro.WebsocketClient):
+    def __init__(self):
+        super(Arbitrager, self).__init__()
+
+    def on_open(self):
+        self.url = "wss://ws-feed.pro.coinbase.com/"
+        self.products = ["ETH-USD", "BTC-USD", "ETH-BTC"]
+        self.channels = ["ticker"]
+
+        self.lastETHUSD = 1
+        self.lastBTCUSD = 1
+        self.lastETHBTC = 1
+
+    def on_message(self, msg):
+        if msg['type'] == 'ticker':
+            if msg['product_id'] == 'ETH-USD':
+                self.lastETHUSD = float(msg['price'])
+            if msg['product_id'] == 'BTC-USD':
+                self.lastBTCUSD = float(msg['price'])
+            if msg['product_id'] == 'ETH-BTC':
+                self.lastETHBTC = float(msg['price'])
+                print(datetime.now(), 'coinbase', f"{self.lastETHBTC:.6f}")
+
+                # self.checkArbitrage()
+
+    def checkArbitrage(self):
+        pair1 = (self.lastETHUSD / self.lastETHBTC) - self.lastBTCUSD
+        # print("profit 1 ", pair1)
+
+
+    def on_close(self):
+        pass
+
+
+a = Arbitrager()
+a.start()
+
+
+async def main():
+    client = await AsyncClient.create()
+    bm = BinanceSocketManager(client)
+    # start any sockets here, i.e a trade socket
+    ts = bm.symbol_ticker_socket('ETHBTC')
+    # then start receiving messages
+    async with ts as tscm:
+        while True:
+            res = await tscm.recv()
+            print(datetime.now(), 'binance ', f"{float(res['b']):.6f}")
+
+    await client.close_connection()
+
+if __name__ == "__main__":
+
+    loop = asyncio.get_event_loop()
+    loop.run_until_complete(main())
+
+
+
+
+
+
+
+
+
+
+
+
+# public_client = cbpro.PublicClient()
+
+# products = public_client.get_products()
+
+# pprint(products)
+
+
+# wsClient = cbpro.WebsocketClient(
+#     url="wss://ws-feed.pro.coinbase.com",
+#     products="BTC-USD",
+#     mongo_collection=mongo_client.trader.matches,
+#     channels=['matches'],
+#     should_print=True
+# )
+
+
+
+
+# wsClient.start()
+
+
+
+
+
+
+# key = "7dcefb9d7a59d723bb0c6d2467fd7225"
+# secret = "Pqxh4/c7/+4sZB6qGDAtPGn354b923gYelupdah6+HccOp6zfghg+9qcDTV5H4+laMwxhgs2UbMafVoy8YN4Ew=="
+# passphrase = "h7ghsarydw"
+#
+#
+# auth_client = cbpro.AuthenticatedClient(key, secret, passphrase)

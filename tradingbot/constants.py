@@ -1,6 +1,10 @@
 import numpy
 from pprint import pprint
 
+raw_data_database_name = "trader"
+aggregated_data_database_name = "trader2"
+my_orders_database_name = "trader"
+
 match_price_buckets = [
     (0.0000, 0.9950),
     (0.9950, 0.9960),
@@ -29,16 +33,17 @@ def getMatchPriceBucket(relativePrice):
 
 volume_buckets = [
     (0, 0.0001),
-    (0.0001, 1),
-    (1, 2),
-    (2, 3),
-    (3, 5),
-    (5, 10),
-    (10, 20),
-    (20, 40),
-    (40, 80),
-    (80, 160),
-    (160, 1000000),
+    (0.0001, 1000000),
+    # (0.0001, 1),
+    # (1, 2),
+    # (2, 3),
+    # (3, 5),
+    # (5, 10),
+    # (10, 20),
+    # (20, 40),
+    # (40, 80),
+    # (80, 160),
+    # (160, 1000000),
 ]
 
 def getVolumeBucket(volume):
@@ -53,7 +58,7 @@ def getVolumeBucket(volume):
 
 
 order_book_price_range_start = 0.98
-order_book_price_range_increment = 0.0005
+order_book_price_range_increment = 0.002
 order_book_price_range_end = 1.02
 
 order_book_price_buckets = [
@@ -79,6 +84,10 @@ def getOrderBookPriceBucket(relativePrice):
 
 
 prediction_intervals = [
-    (1, 5),
-    (5, 15)
+    (2, 30),
+    # (5, 10),
+    # (10, 15)
 ]
+
+
+prediction_sequence_input_length = 60

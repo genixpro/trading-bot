@@ -1,6 +1,7 @@
 from datetime import datetime
 from pprint import pprint
 from tradingbot.constants import match_price_buckets, getMatchPriceBucket, order_book_price_buckets, getOrderBookPriceBucket
+import tradingbot.constants
 import numpy
 
 class OrderBookStreamAggregator:
@@ -11,10 +12,10 @@ class OrderBookStreamAggregator:
 
         self.mongo_client = mongo_client
 
-        self.aggregated_order_book_collection = self.mongo_client.trader.aggregated_order_book
+        self.aggregated_order_book_collection = self.mongo_client[tradingbot.constants.aggregated_data_database_name].aggregated_order_book
 
         self.most_recent_message_time_processed = None
-        self.matches_processed = 0
+        self.messages_processed = 0
         
         self.current_bids = {}
         self.current_asks = {}
@@ -45,17 +46,27 @@ class OrderBookStreamAggregator:
             for change in message['changes']:
                 if change[0] == 'buy':
                     if float(change[2]) == 0:
-                        del self.current_bids[change[1]]
+                        try:
+                            del self.current_bids[change[1]]
+                        except KeyError:
+                            print(f"Error in processing the order book! I received an update for which there was no key in our existing order book")
                     else:
                         self.current_bids[change[1]] = change[2]
 
                 elif change[0] == 'sell':
                     if float(change[2]) == 0:
-                        del self.current_asks[change[1]]
+                        try:
+                            del self.current_asks[change[1]]
+                        except KeyError:
+                            print(f"Error in processing the order book! I received an update for which there was no key in our existing order book")
                     else:
                         self.current_asks[change[1]] = change[2]
 
             self.most_recent_message_time_processed = time
+        self.messages_processed += 1
+
+        if self.messages_processed % 100000 == 0:
+            print(f"Processed {self.messages_processed:,} messages.")
 
     def getMinuteForMessage(self, message):
         timeStringWithoutSeconds = message['time'].strftime("%Y-%m-%dT%H:%M:00")

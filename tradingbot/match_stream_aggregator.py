@@ -1,6 +1,7 @@
 from datetime import datetime
 from pprint import pprint
 import numpy
+import tradingbot.constants
 
 
 class MatchStreamAggregator:
@@ -11,7 +12,7 @@ class MatchStreamAggregator:
 
         self.mongo_client = mongo_client
 
-        self.aggregated_matches_collection = self.mongo_client.trader.aggregated_matches
+        self.aggregated_matches_collection = self.mongo_client[tradingbot.constants.aggregated_data_database_name].aggregated_matches
 
         self.most_recent_match_time_processed = None
         self.matches_processed = 0
@@ -30,6 +31,9 @@ class MatchStreamAggregator:
         if self.matches_processed % 1000 == 0:
             self.syncAggregations()
             self.removeOldAggregations()
+
+        if self.matches_processed % 100000 == 0:
+            print(f"Processed {self.matches_processed:,} matches.")
 
     def getMinuteForMatch(self, match):
         minute = match['time'].strftime("%Y-%m-%dT%H:%M:00")
