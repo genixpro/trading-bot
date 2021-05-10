@@ -220,6 +220,10 @@ class Predictor:
 
                     inputVector.extend(self.prepareOrderBookAggregation(orderBookAggregation))
 
+                    # Add one extra unit to the input vector, to make space for the sequential price feature,
+                    # which is computed on a batch by batch basis.
+                    inputVector.append(0)
+
                     inputs.append(inputVector)
                     outputs.append(outputVectors)
 
@@ -241,12 +245,10 @@ class Predictor:
         self.testingInputs = torch.tensor(numpy.array([inputs[testingCutoffIndex:]]), device=self.device, dtype=torch.float32)
         self.testingOutputs = torch.tensor(numpy.array([outputs[testingCutoffIndex:]]), device=self.device, dtype=torch.float32)
 
-    def prepareSequentialPricesForVectorSequence(self, vectors):
+    def setSequentialPricesFeatureForVectorSequence(self, vectors):
         absolutePrices = torch.exp(vectors[0, :, 0] * 10)
         relativePrices = (absolutePrices[1:] - absolutePrices[:-1]) * 0.1
-        relativePrices = torch.cat([torch.zeros(1, device=self.device), relativePrices])
-        relativePricesWithExtraDims = torch.unsqueeze(torch.unsqueeze(relativePrices, dim=1), dim=0)
-        return relativePricesWithExtraDims
+        vectors[0, 1:, -1] = relativePrices
 
     def prepareNormalizedBatch(self, inputAggregations):
         lastPrice = inputAggregations[-1][0]['averagePrice']
@@ -274,7 +276,9 @@ class Predictor:
         # inputAggregations = self.trainingAggregations[start:start + self.sequenceLength]
         # inputSequence, outputVector = self.prepareNormalizedBatch(inputAggregations)
 
-        inputSequence = torch.cat([inputSequence, self.prepareSequentialPricesForVectorSequence(inputSequence)], dim=2)
+        inputSequence = torch.clone(inputSequence)
+        self.setSequentialPricesFeatureForVectorSequence(inputSequence)
+
         return inputSequence, outputVector
 
     def prepareTrainingBatch(self):
@@ -297,7 +301,9 @@ class Predictor:
         # inputAggregations = self.trainingAggregations[start:start + self.sequenceLength]
         # inputSequence, outputVector = self.prepareNormalizedBatch(inputAggregations)
 
-        inputSequence = torch.cat([inputSequence, self.prepareSequentialPricesForVectorSequence(inputSequence)], dim=2)
+        inputSequence = torch.clone(inputSequence)
+        self.setSequentialPricesFeatureForVectorSequence(inputSequence)
+
         return inputSequence, outputVector
 
     def prepareTestingBatch(self):
@@ -328,9 +334,9 @@ class Predictor:
 
             # loss = torch.nn.functional.binary_cross_entropy(modelOutput, batchExpectedOutput)
 
-            # loss = torch.nn.functional.kl_div(torch.log(modelOutput), batchExpectedOutput)
+            loss = torch.nn.functional.kl_div(torch.log(modelOutput), batchExpectedOutput)
             # print(batchExpectedOutput[0])
-            loss = torch.nn.functional.l1_loss(modelOutput, batchExpectedOutput)
+            # loss = torch.nn.functional.l1_loss(modelOutput, batchExpectedOutput)
 
             loss.backward()
 
@@ -349,10 +355,10 @@ class Predictor:
         modelOutput = self.model.forward(batchInput)
 
         # loss = torch.nn.functional.binary_cross_entropy(modelOutput, batchExpectedOutput)
-        # loss = torch.nn.functional.kl_div(torch.log(modelOutput), batchExpectedOutput)
-        loss = torch.nn.functional.l1_loss(modelOutput, batchExpectedOutput)
+        loss = torch.nn.functional.kl_div(torch.log(modelOutput), batchExpectedOutput)
+        # loss = torch.nn.functional.l1_loss(modelOutput, batchExpectedOutput)
 
-        if iteration % 1000 == 0:
+        if iteration % 1000 == 0 and iteration > 5000:
             print("modelOutput", modelOutput[0])
             print("batchExpectedOutput", batchExpectedOutput[0])
 
@@ -368,16 +374,18 @@ class Predictor:
 
         epochsWithIncreasingTestingLoss = 0
 
-        for iteration in range(self.maxIterations):
-            start = datetime.now()
+        timerStart = datetime.now()
 
+        print("Starting the core training loop")
+        for iteration in range(1, self.maxIterations):
             trainingLoss = self.runSingleTrainingIterations(iteration)
 
-            testingLoss = self.runSingleTestingIterations(iteration)
-            testingLosses.append(testingLoss)
+            if iteration % 5 == 0:
+                testingLoss = self.runSingleTestingIterations(iteration)
+                testingLosses.append(testingLoss)
 
             if iteration % 100 == 0:
-                testingLoss = numpy.mean(testingLosses[-100:])
+                testingLoss = numpy.mean(testingLosses[-20:])
                 self.lrScheduler.step(testingLoss)
 
             if iteration % 1000 == 0:
@@ -389,14 +397,14 @@ class Predictor:
                     if bestTestingLoss is None or testingLoss < bestTestingLoss:
                         bestTestingLoss = testingLoss
 
-                print(f"Testing Iteration {iteration}. Loss {testingLoss:.4f}")
+                print(f"Iteration: {iteration}. Testing Loss {testingLoss:.4f}.")
                 testingLosses = []
                 lastAverageTestingLoss = testingLoss
 
-            end = datetime.now()
-
             if iteration % 1000 == 0:
-                print(f"Iteration {iteration}. Loss {trainingLoss:.4f} Time per iteration {(end - start).total_seconds():.3f}")
+                timerEnd = datetime.now()
+                print(f"Iteration: {iteration}. Training Loss: {trainingLoss:.4f}. Time per 1,000 iterations: {(timerEnd - timerStart).total_seconds():.3f}.")
+                timerStart = datetime.now()
 
             if epochsWithIncreasingTestingLoss > 2:
                 break
@@ -418,11 +426,14 @@ class Predictor:
             inputVector = self.prepareMatchAggregationInput(matchAggregation)
             inputVector.extend(self.prepareOrderBookAggregation(orderBookAggregation))
 
+            # Make room for the sequential prices feature
+            inputVector.append(0)
+
             input.append(inputVector)
 
         inputTensor = torch.tensor(numpy.array([input]), device=self.device, dtype=torch.float32)
 
-        inputTensor = torch.cat([inputTensor, self.prepareSequentialPricesForVectorSequence(inputTensor)], dim=2)
+        self.setSequentialPricesFeatureForVectorSequence(inputTensor)
 
         self.model.eval()
 
