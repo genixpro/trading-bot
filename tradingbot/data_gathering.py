@@ -84,9 +84,9 @@ class TraderDataGatherer(cbpro.WebsocketClient):
 
 
 
-# key = "7dcefb9d7a59d723bb0c6d2467fd7225"
-# secret = "Pqxh4/c7/+4sZB6qGDAtPGn354b923gYelupdah6+HccOp6zfghg+9qcDTV5H4+laMwxhgs2UbMafVoy8YN4Ew=="
-# passphrase = "h7ghsarydw"
+# key = ""
+# secret = ""
+# passphrase = ""
 #
 #
 # auth_client = cbpro.AuthenticatedClient(key, secret, passphrase)
